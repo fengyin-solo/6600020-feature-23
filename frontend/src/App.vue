@@ -12,8 +12,12 @@
         </button>
       </div>
       <div>
-        <label class="text-gray-400 text-xs">轮询间隔: {{ store.pollInterval }}ms</label>
-        <input type="range" v-model.number="store.pollInterval" min="200" max="5000" step="100" class="w-full" />
+        <label class="text-gray-400 text-xs">普通轮询间隔: {{ store.pollInterval }}ms</label>
+        <input type="range" v-model.number="store.pollInterval" min="500" max="5000" step="100" class="w-full" />
+      </div>
+      <div>
+        <label class="text-orange-400 text-xs">选中设备快速轮询: {{ store.fastPollInterval }}ms</label>
+        <input type="range" v-model.number="store.fastPollInterval" min="50" max="2000" step="50" class="w-full" />
       </div>
 
       <h3 class="text-gray-400 text-xs mt-2">设备列表</h3>
@@ -43,14 +47,16 @@
     <div class="flex-1 flex flex-col gap-3 p-4 overflow-y-auto">
       <!-- Register Gauges -->
       <div class="grid grid-cols-4 gap-3">
-        <div v-for="d in store.devices" :key="d.id" v-for="r in d.registers" :k="r.address"
-          class="bg-gray-900 rounded-xl p-3">
-          <div class="text-xs text-gray-400">{{ d.name }}</div>
-          <div class="text-2xl font-bold" :class="d.online ? 'text-orange-400' : 'text-gray-600'">
-            {{ typeof r.value === 'number' ? r.value.toFixed(r.value > 100 ? 0 : 1) : r.value ? 'ON' : 'OFF' }}
+        <template v-for="d in store.devices" :key="d.id">
+          <div v-for="r in d.registers" :key="`${d.id}_${r.address}`"
+            class="bg-gray-900 rounded-xl p-3">
+            <div class="text-xs text-gray-400">{{ d.name }}</div>
+            <div class="text-2xl font-bold" :class="d.online ? 'text-orange-400' : 'text-gray-600'">
+              {{ typeof r.value === 'number' ? r.value.toFixed(r.value > 100 ? 0 : 1) : r.value ? 'ON' : 'OFF' }}
+            </div>
+            <div class="text-xs text-gray-500">{{ r.name }} {{ r.unit }}</div>
           </div>
-          <div class="text-xs text-gray-500">{{ r.name }} {{ r.unit }}</div>
-        </div>
+        </template>
       </div>
 
       <!-- Chart -->
@@ -79,22 +85,43 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useModbusStore } from './store/modbus'
 import TrendChart from './components/TrendChart.vue'
 
 const store = useModbusStore()
-let timer: number | null = null
+let fastTimer: number | null = null
+let slowTimer: number | null = null
+
+function startFastTimer() {
+  if (fastTimer) clearInterval(fastTimer)
+  fastTimer = window.setInterval(() => store.pollSelectedDevice(), store.fastPollInterval)
+}
+
+function startSlowTimer() {
+  if (slowTimer) clearInterval(slowTimer)
+  slowTimer = window.setInterval(() => store.pollOtherDevices(), store.pollInterval)
+}
 
 function startPoll() {
   store.isPolling = true
-  timer = window.setInterval(() => store.simulatePoll(), store.pollInterval)
+  startFastTimer()
+  startSlowTimer()
 }
 
 function stopPoll() {
   store.isPolling = false
-  if (timer) { clearInterval(timer); timer = null }
+  if (fastTimer) { clearInterval(fastTimer); fastTimer = null }
+  if (slowTimer) { clearInterval(slowTimer); slowTimer = null }
 }
+
+watch(() => store.fastPollInterval, () => {
+  if (store.isPolling) startFastTimer()
+})
+
+watch(() => store.pollInterval, () => {
+  if (store.isPolling) startSlowTimer()
+})
 
 onMounted(() => store.initMockDevices())
 onUnmounted(() => stopPoll())

@@ -8,6 +8,7 @@ export const useModbusStore = defineStore('modbus', () => {
   const historyData = ref<Record<string, { time: number[]; values: number[] }>>({})
   const isPolling = ref(false)
   const pollInterval = ref(1000)
+  const fastPollInterval = ref(200)
   const selectedDevice = ref<Device | null>(null)
 
   const criticalAlarms = computed(() => alarms.value.filter(a => a.level === 'critical' && !a.acknowledged))
@@ -49,33 +50,51 @@ export const useModbusStore = defineStore('modbus', () => {
     selectedDevice.value = devices.value[0]
   }
 
-  function simulatePoll() {
-    for (const dev of devices.value) {
-      if (!dev.online) continue
-      for (const reg of dev.registers) {
-        if (typeof reg.value === 'number') {
-          const noise = (Math.random() - 0.5) * reg.value * 0.02
-          reg.value = Math.round((reg.value + noise) * 100) / 100
-          reg.updatedAt = Date.now()
-          const key = `${dev.id}_${reg.address}`
-          if (!historyData.value[key]) historyData.value[key] = { time: [], values: [] }
-          historyData.value[key].time.push(Date.now())
-          historyData.value[key].values.push(reg.value)
-          if (historyData.value[key].time.length > 100) {
-            historyData.value[key].time.shift()
-            historyData.value[key].values.shift()
-          }
-          // Check thresholds
-          if (reg.name === '温度' && reg.value > 28) {
-            alarms.value.unshift({
-              id: `a_${Date.now()}`, deviceId: dev.id, register: reg.name,
-              message: `${dev.name} ${reg.name}超限: ${reg.value}${reg.unit}`,
-              level: reg.value > 30 ? 'critical' : 'warning',
-              timestamp: Date.now(), acknowledged: false
-            })
-          }
+  function updateDeviceRegisters(dev: Device) {
+    if (!dev.online) return
+    for (const reg of dev.registers) {
+      if (typeof reg.value === 'number') {
+        const noise = (Math.random() - 0.5) * reg.value * 0.02
+        reg.value = Math.round((reg.value + noise) * 100) / 100
+        reg.updatedAt = Date.now()
+        const key = `${dev.id}_${reg.address}`
+        if (!historyData.value[key]) historyData.value[key] = { time: [], values: [] }
+        historyData.value[key].time.push(Date.now())
+        historyData.value[key].values.push(reg.value)
+        if (historyData.value[key].time.length > 100) {
+          historyData.value[key].time.shift()
+          historyData.value[key].values.shift()
+        }
+        if (reg.name === '温度' && reg.value > 28) {
+          alarms.value.unshift({
+            id: `a_${Date.now()}`, deviceId: dev.id, register: reg.name,
+            message: `${dev.name} ${reg.name}超限: ${reg.value}${reg.unit}`,
+            level: reg.value > 30 ? 'critical' : 'warning',
+            timestamp: Date.now(), acknowledged: false
+          })
         }
       }
+    }
+  }
+
+  function pollSelectedDevice() {
+    if (selectedDevice.value) {
+      updateDeviceRegisters(selectedDevice.value)
+    }
+    if (alarms.value.length > 50) alarms.value = alarms.value.slice(0, 50)
+  }
+
+  function pollOtherDevices() {
+    for (const dev of devices.value) {
+      if (dev.id === selectedDevice.value?.id) continue
+      updateDeviceRegisters(dev)
+    }
+    if (alarms.value.length > 50) alarms.value = alarms.value.slice(0, 50)
+  }
+
+  function simulatePoll() {
+    for (const dev of devices.value) {
+      updateDeviceRegisters(dev)
     }
     if (alarms.value.length > 50) alarms.value = alarms.value.slice(0, 50)
   }
@@ -91,8 +110,8 @@ export const useModbusStore = defineStore('modbus', () => {
   }
 
   return {
-    devices, alarms, historyData, isPolling, pollInterval, selectedDevice,
+    devices, alarms, historyData, isPolling, pollInterval, fastPollInterval, selectedDevice,
     criticalAlarms, onlineDevices,
-    initMockDevices, simulatePoll, acknowledgeAlarm, toggleDevice
+    initMockDevices, simulatePoll, pollSelectedDevice, pollOtherDevices, acknowledgeAlarm, toggleDevice
   }
 })
